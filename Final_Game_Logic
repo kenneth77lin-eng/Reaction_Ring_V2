@@ -1,0 +1,182 @@
+#define NUM_MAGNETS 8
+
+// --- Relay Logic Definitions ---
+#define RELAY_ON HIGH   
+#define RELAY_OFF LOW 
+
+// --- Pin Definitions ---
+const int mainSwitchPin = 10;     // Main "Start Game" flip switch
+const int easyModeSwitchPin = 11; // Toggle switch for Easy Mode
+const int magnetPins[NUM_MAGNETS] = {2, 3, 4, 5, 6, 7, 8, 9};
+
+// --- Game Variables ---
+bool magnetStates[NUM_MAGNETS]; 
+int dropOrder[NUM_MAGNETS];     
+
+enum GameState {
+  STANDBY,   // Switch OFF: Magnets are ON, ready to hold dowels
+  STARTING,  // Switch flipped ON: Prepping the game
+  PLAYING,   // The game is running, dropping dowels
+  FINISHED   // All 8 dropped. Magnets instantly turned back ON.
+};
+
+GameState currentState = STANDBY;
+int currentDropIndex = 0;
+unsigned long lastDropTime = 0;
+unsigned long nextDropDelay = 0;
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Set up both switches with internal pull-up resistors
+  pinMode(mainSwitchPin, INPUT_PULLUP);
+  pinMode(easyModeSwitchPin, INPUT_PULLUP);
+  
+  // Set up magnet pins. Magnets are ON by default in standby!
+  for (int i = 0; i < NUM_MAGNETS; i++) {
+    pinMode(magnetPins[i], OUTPUT);
+    digitalWrite(magnetPins[i], RELAY_ON); 
+    magnetStates[i] = true;
+    dropOrder[i] = i; 
+  }
+  
+  randomSeed(analogRead(A0)); 
+  Serial.println("System Ready (STANDBY). Magnets are ON. Load dowels and flip main switch ON to start.");
+}
+
+void loop() {
+  // Read the main switch. LOW means it's flipped ON.
+  bool switchIsOn = (digitalRead(mainSwitchPin) == LOW);
+
+  // If the main switch is flipped OFF at any time, reset the game state
+  if (!switchIsOn && currentState != STANDBY) {
+    turnAllMagnetsOn(); // Ensure they are on to hold the dowels
+    currentState = STANDBY;
+    Serial.println("Main switch flipped OFF. System reset to STANDBY.");
+    return;
+  }
+
+  // --- Game State Machine ---
+  switch (currentState) {
+    
+    case STANDBY:
+      if (switchIsOn) {
+        currentState = STARTING;
+      }
+      break;
+
+    case STARTING:
+      if (digitalRead(easyModeSwitchPin) == LOW) {
+        Serial.println("Game Started! [EASY MODE ACTIVE]");
+      } else {
+        Serial.println("Game Started! [NORMAL MODE ACTIVE]");
+      }
+      
+      shuffleArray(dropOrder, NUM_MAGNETS);
+      currentDropIndex = 0;
+      
+      // 3-second warning before the first drop
+      delay(3000); 
+      
+      lastDropTime = millis();
+      calculateNextDelay();
+      currentState = PLAYING;
+      Serial.println("Begin dropping!");
+      break;
+
+    case PLAYING:
+      // Check if enough time has passed to drop the next dowel
+      if (millis() - lastDropTime >= nextDropDelay) {
+        
+        int magnetToDrop = dropOrder[currentDropIndex];
+        
+        // Turn OFF the relay for this specific magnet (drops the dowel)
+        digitalWrite(magnetPins[magnetToDrop], RELAY_OFF);
+        magnetStates[magnetToDrop] = false; 
+        
+        Serial.print("Dropped dowel #");
+        Serial.print(currentDropIndex + 1);
+        Serial.print(" (Pin ");
+        Serial.print(magnetPins[magnetToDrop]);
+        Serial.print(") - Delay was ");
+        Serial.print(nextDropDelay);
+        Serial.println(" ms");
+        
+        currentDropIndex++;
+        lastDropTime = millis();
+
+        // Check if all magnets have been dropped
+        if (currentDropIndex >= NUM_MAGNETS) {
+          Serial.println("Game Over! All 8 dropped. Magnets turning back ON to reload.");
+          turnAllMagnetsOn();
+          currentState = FINISHED;
+        } else {
+          calculateNextDelay();
+        }
+      }
+      break;
+
+    case FINISHED:
+      // The game rests here indefinitely until the player flips the main switch OFF.
+      break;
+  }
+}
+
+// --- Helper Functions ---
+
+void turnAllMagnetsOn() {
+  for (int i = 0; i < NUM_MAGNETS; i++) {
+    digitalWrite(magnetPins[i], RELAY_ON);
+    magnetStates[i] = true;
+  }
+}
+
+// Fisher-Yates Shuffle Algorithm for true randomization
+void shuffleArray(int *array, int size) {
+  for (int i = size - 1; i > 0; i--) {
+    int j = random(i + 1);
+    int temp = array[i];
+    array[i] = array[j];
+    array[j] = temp;
+  }
+}
+
+// Calculates delay for the next drop, with separate difficulty logic for Easy and Normal
+void calculateNextDelay() {
+  long minDelay;
+  long maxDelay;
+  long deduction = 0;
+
+  // Check if Easy Mode is active
+  if (digitalRead(easyModeSwitchPin) == LOW) {
+    // --- EASY MODE LOGIC ---
+    minDelay = 2000;
+    maxDelay = 4000;
+    
+    // 100ms deduction after the 4th drop
+    if (currentDropIndex >= 4) {
+      deduction = (currentDropIndex - 3) * 100; 
+    }
+    nextDropDelay = random(minDelay - deduction, maxDelay - deduction + 1);
+
+  } else {
+    // --- NORMAL MODE LOGIC ---
+    
+    // SPECIAL RULE: If calculating the delay for the final (8th) dowel
+    if (currentDropIndex == NUM_MAGNETS - 1) { 
+      // Force the delay to be between 100ms and 500ms
+      nextDropDelay = random(100, 501); 
+    } 
+    // STANDARD NORMAL RULE:
+    else {
+      minDelay = 1000;
+      maxDelay = 3000;
+      
+      // Harder 200ms deduction after the 4th drop
+      if (currentDropIndex >= 4) {
+        deduction = (currentDropIndex - 3) * 200; 
+      }
+      nextDropDelay = random(minDelay - deduction, maxDelay - deduction + 1);
+    }
+  }
+}
