@@ -56,4 +56,4 @@ The codebase is built around a non-blocking **Finite State Machine (FSM)** with 
 
 ## 📜 License
 
-This project is open-source and available under the [MIT License](LICENSE).
+This project is open-source and available under the [MIT License].
